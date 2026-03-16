@@ -4,4 +4,4 @@ AI/ML Branch Spring 2026
 This is the repository for the AI/ML Branch of DSDG's Spring 2026 Cohort.
 The semester project is to create a model that can predict upcoming ATP match results based on player history and previous matchups.
 
-Please upload just your team's jupyter notebook.
+Please upload just your team's jupyter notebook and include each member of the team inside the notebook.
