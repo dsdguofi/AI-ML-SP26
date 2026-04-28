@@ -1,29 +1,35 @@
 # Swiss Legal Citation Retrieval
 
-Given an English legal question, retrieve the relevant Swiss legal citations from a German/French/Italian corpus. Scored on **Macro F1** — per-query precision/recall F1 averaged across all test queries.
+Given an English legal question, retrieve the relevant Swiss legal citations from a German/French/Italian corpus. Scored on **Macro F1** — per-query precision/recall F1 averaged across all queries.
 
-**Current val score: Macro F1 = 0.2528** (10 queries, exact-string set match)
+**Current val score: Macro F1 ≈ 0.25** (10 queries, exact-string set match)
 
 ---
 
 ## How It Works
 
-The pipeline has five stages:
+The pipeline has five stages, run for each query:
 
-1. **Query extraction** — regex-extract any citations mentioned verbatim in the English query (e.g. `Art. 221 Abs. 1 StPO`). These are high-precision and go first.
-2. **LLM translation** — `llama3.2:3b` translates the query to German, French, and Italian so BM25 can match against the German corpus.
-3. **BM25 retrieval** — sparse retrieval over 176k statute and court-decision chunks, run once per query variant. Inline citations found in retrieved chunks are harvested and scored by frequency.
-4. **Topic fallback** — keyword heuristics add canonical articles for well-defined legal domains (criminal detention, disability insurance, inheritance, etc.) when ≥2 domain keywords match.
-5. **LLM reranker** — `llama3.2:3b` picks the best 30 citations from the merged candidate pool, grounded to corpus membership.
+1. **Citation extraction** — regex-scans the English query for any citations mentioned verbatim (e.g. `Art. 221 Abs. 1 StPO`). These are high-precision and go first in the candidate pool.
 
-All predictions are emitted in **abbreviation form** (e.g. `Art. 221 Abs. 1 StPO`) to match the exact-string gold standard.
+2. **Topic fallback** — keyword heuristics detect the legal domain (criminal detention, disability insurance, inheritance, contract, etc.) and inject canonical statute articles for that domain. Requires ≥2 keyword matches to avoid misfiring on incidental words.
+
+3. **LLM translation** — `llama3.2:3b` (via Ollama) translates the English query to German, French, and Italian so BM25 can match against the multilingual corpus.
+
+4. **BM25 retrieval** — sparse retrieval over 176k statute chunks, run once per query variant (EN + DE + FR + IT + expanded legal terms). Inline citations found in the retrieved chunks are harvested and scored by frequency across variants.
+
+5. **LLM reranker** — `llama3.2:3b` picks the best 30 citations from the merged candidate pool, grounded to corpus membership only (no hallucination).
+
+A BGG procedural floor (`Art. 100 Abs. 1 BGG` etc.) is always appended since these appear in nearly every Swiss Federal Court appellate gold set.
+
+All predictions are emitted in **abbreviation form** (e.g. `Art. 221 Abs. 1 StPO`) to match the exact-string gold standard. Falls back to deterministic ordering if Ollama is unavailable.
 
 ---
 
 ## Setup
 
 ```bash
-git clone https://github.com/alanyom/AI-ML-SP26
+git clone https://github.com/dsdguofi/AI-ML-SP26
 cd AI-ML-SP26/Law_Retrieval
 
 python3 -m venv .venv
@@ -57,7 +63,7 @@ data/
 └── sample_submission.csv      # Required submission format
 ```
 
-Build the BM25 index once (takes ~2 minutes):
+Build the BM25 index once (~2 minutes):
 
 ```bash
 python index_builder.py
@@ -67,29 +73,24 @@ python index_builder.py
 
 ## Usage
 
-**Batch prediction (val or test):**
+**Batch prediction:**
 
 ```bash
-# Score against val set
+# Val set (with per-query F1 breakdown)
 python Law_evaluation.py --split val --out val_submission.csv
+python evaluation/evaluate.py val_submission.csv --split val -v
 
-# Generate test submission
+# Test submission
 python Law_evaluation.py --split test --out submission.csv
 
-# Skip LLM (fast deterministic fallback only)
+# Skip Ollama — fast deterministic fallback only
 python Law_evaluation.py --split val --no-llm
 ```
 
-**Interactive mode** (paste a case, get citations):
+**Interactive mode** — paste a case description, get citations:
 
 ```bash
 python Law_evaluation.py --interactive
-```
-
-**Evaluate locally:**
-
-```bash
-python evaluation/evaluate.py val_submission.csv --split val -v
 ```
 
 **Run tests:**
@@ -106,13 +107,13 @@ pytest tests/
 ├── Law_evaluation.py       # Main pipeline (retriever + CLI)
 ├── citation_norm.py        # Citation extraction regex + SR↔abbreviation conversion
 ├── ollama_client.py        # Thin wrapper around Ollama HTTP API
-├── prompts.py              # LLM prompt templates
-├── index_builder.py        # Builds BM25 index from laws_de.csv + court_considerations.csv
+├── prompts.py              # LLM prompt templates (translate, expand, rerank)
+├── index_builder.py        # Builds BM25 index from laws_de.csv
 ├── notebook.ipynb          # Interactive demo notebook
 ├── evaluation/
 │   ├── metrics.py          # Macro F1, Micro F1, MAP, NDCG
 │   └── evaluate.py         # CLI scoring script
-├── data/                   # All data files go here
+├── data/                   # All data files (gitignored)
 └── tests/
     ├── conftest.py
     └── test_metrics.py
@@ -138,11 +139,8 @@ The test set has 40 English queries — 20 scored on the public leaderboard, 20 
 
 Primary metric: **Macro F1**
 
-For each query:
-- **Precision** = correct citations predicted / all citations predicted
-- **Recall** = correct citations predicted / all gold citations
-- **F1** = harmonic mean of precision and recall
+- **Precision** = correct citations predicted / all citations predicted  
+- **Recall** = correct citations predicted / all gold citations  
+- **F1** = harmonic mean, averaged across all queries
 
-Final score = average F1 across all queries.
-
-> Citations must exactly match the corpus abbreviation form (e.g. `Art. 41 OR`, `BGE 116 Ia 56 E. 2b`). Never generate citations freely with an LLM — always ground them against the corpus.
+> Citations must exactly match the corpus abbreviation form (e.g. `Art. 41 OR`, `BGE 116 Ia 56 E. 2b`). The pipeline grounds all predictions to the corpus — it never generates citation strings freely.

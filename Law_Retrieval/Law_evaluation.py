@@ -161,7 +161,7 @@ class LegalRetriever:
 
             if self._ollama is not None:
                 self._translate_ollama = OllamaClient(
-                    model=self.translate_model, timeout=90
+                    model=self.translate_model, timeout=180
                 )
                 print(f"[load] Ollama translator OK ({self.translate_model})", file=sys.stderr)
 
@@ -346,7 +346,7 @@ class LegalRetriever:
         for c in raw:
             if not isinstance(c, str):
                 continue
-            c = c.strip()
+            c = c.strip().strip("[]")
             if c in pool_set and c not in seen:
                 grounded.append(c)
                 seen.add(c)
